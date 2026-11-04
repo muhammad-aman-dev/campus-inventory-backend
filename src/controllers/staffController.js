@@ -271,3 +271,50 @@ export const deactivateStaff = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+
+export const reactivateStaff = async (req, res) => {
+  try {
+    const admin = await checkAdmin(req, res);
+
+    if (!admin) return;
+
+    const validation = staffIdSchema.safeParse(req.params);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        message: "Invalid staff ID",
+      });
+    }
+
+    const staff = await User.findOneAndUpdate(
+      {
+        _id: validation.data.id,
+        role: "staff",
+        isActive: false,
+      },
+      {
+        $set: { isActive: true },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).select("name email role department isActive createdAt");
+
+    if (!staff) {
+      return res.status(404).json({
+        message: "Inactive staff member not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Staff account reactivated successfully",
+      staff,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message,
+    });
+  }
+};

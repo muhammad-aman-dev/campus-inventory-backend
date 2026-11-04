@@ -36,43 +36,33 @@ const hashRefreshToken = (token) => {
     .digest("hex");
 };
 
-const setTokenCookies = (res, accessToken, refreshToken) => {
-  const isProduction = process.env.NODE_ENV === "production";
 
+const isProduction = process.env.NODE_ENV === "production";
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  path: "/",
+};
+
+const setTokenCookies = (res, accessToken, refreshToken) => {
   res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
+    ...cookieOptions,
     maxAge: 15 * 60 * 1000,
-    path: "/",
   });
 
   res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
+    ...cookieOptions,
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/",
   });
 };
 
 const clearTokenCookies = (res) => {
-  const isProduction = process.env.NODE_ENV === "production";
-
-  res.clearCookie("accessToken", {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    path: "/",
-  });
-
-  res.clearCookie("refreshToken", {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    path: "/",
-  });
+  res.clearCookie("accessToken", cookieOptions);
+  res.clearCookie("refreshToken", cookieOptions);
 };
+
 
 const getSafeUser = (user) => {
   return {
