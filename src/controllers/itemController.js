@@ -10,6 +10,10 @@ import {
   itemQuerySchema,
 } from "../validators/itemValidator.js";
 
+const escapeRegex = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 const getLoggedInUser = async (req) => {
   const accessToken = req.cookies.accessToken;
 
@@ -141,7 +145,7 @@ export const getAllItems = async (req, res) => {
 
     if (search) {
       filter.name = {
-        $regex: search,
+        $regex: escapeRegex(search),
         $options: "i",
       };
     }

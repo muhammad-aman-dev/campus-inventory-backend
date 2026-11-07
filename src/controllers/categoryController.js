@@ -6,6 +6,7 @@ import {
   createCategorySchema,
   updateCategorySchema,
 } from "../validators/categoryValidator.js";
+import Item from "../models/Item.js";
 
 const getLoggedInUser = async (req) => {
   const accessToken = req.cookies.accessToken;
@@ -221,6 +222,17 @@ export const deleteCategory = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Admin access required",
+      });
+    }
+
+    const itemCount = await Item.countDocuments({
+      category: req.params.id,
+    });
+
+    if (itemCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This category still has items. Remove or move them first.",
       });
     }
 

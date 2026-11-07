@@ -7,7 +7,15 @@ import crypto from "crypto";
 import {
   registerSchema,
   loginSchema,
+  emailSchema,
+  verifyEmailSchema,
+  resetPasswordSchema,
 } from "../validators/authValidator.js";
+import { generateToken, hashToken } from "../utils/tokens.js";
+import {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+} from "../utils/sendEmail.js";
 
 const generateAccessToken = (userId) => {
   return jwt.sign(
@@ -75,6 +83,16 @@ const getSafeUser = (user) => {
   };
 };
 
+const issueVerificationToken = async (user) => {
+  const { rawToken, hashedToken } = generateToken();
+
+  user.emailVerificationToken = hashedToken;
+  user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await user.save();
+
+  await sendVerificationEmail(user, rawToken);
+};
+
 export const register = async (req, res) => {
   try {
     const validation = registerSchema.safeParse(req.body);
@@ -111,21 +129,26 @@ export const register = async (req, res) => {
       studentId,
       department,
       role: "student",
+      isEmailVerified: false,
     });
 
-    const accessToken = generateAccessToken(user._id);
-    const refreshToken = generateRefreshToken(user._id);
+    let emailSent = true;
 
-    user.refreshToken = hashRefreshToken(refreshToken);
-    await user.save();
-
-    setTokenCookies(res, accessToken, refreshToken);
+    try {
+      await issueVerificationToken(user);
+    } catch (mailError) {
+      emailSent = false;
+      console.error("Verification email failed:", mailError.message);
+    }
 
     return res.status(201).json({
       success: true,
-      message: "Registration successful",
+      message: emailSent
+        ? "Registration successful. Please check your email to verify your account."
+        : "Account created, but the verification email could not be sent. Please use resend verification.",
       data: {
-        user: getSafeUser(user),
+        email: user.email,
+        emailSent,
       },
     });
   } catch (error) {
@@ -167,12 +190,20 @@ export const login = async (req, res) => {
       });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+        const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
+      });
+    }
+
+    if (user.role === "student" && !user.isEmailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email before logging in",
+        code: "EMAIL_NOT_VERIFIED",
       });
     }
 
@@ -329,6 +360,177 @@ export const logout = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Logout successful",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const validation = verifyEmailSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification token is required",
+      });
+    }
+
+    const user = await User.findOne({
+      emailVerificationToken: hashToken(validation.data.token),
+      emailVerificationExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification link is invalid or has expired",
+      });
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully. You can now log in.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const resendVerification = async (req, res) => {
+  const genericResponse = {
+    success: true,
+    message:
+      "If this account exists and is not verified, a new verification email has been sent.",
+  };
+
+  try {
+    const validation = emailSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email",
+      });
+    }
+
+    const user = await User.findOne({ email: validation.data.email });
+
+    if (
+      user &&
+      user.isActive &&
+      user.role === "student" &&
+      !user.isEmailVerified
+    ) {
+      try {
+        await issueVerificationToken(user);
+      } catch (mailError) {
+        console.error("Verification email failed:", mailError.message);
+      }
+    }
+
+    return res.status(200).json(genericResponse);
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  const genericResponse = {
+    success: true,
+    message:
+      "If an account with this email exists, a password reset link has been sent.",
+  };
+
+  try {
+    const validation = emailSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email",
+      });
+    }
+
+    const user = await User.findOne({ email: validation.data.email });
+
+    if (user && user.isActive) {
+      try {
+        const { rawToken, hashedToken } = generateToken();
+
+        user.passwordResetToken = hashedToken;
+        user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+        await user.save();
+
+        await sendPasswordResetEmail(user, rawToken);
+      } catch (mailError) {
+        console.error("Password reset email failed:", mailError.message);
+      }
+    }
+
+    return res.status(200).json(genericResponse);
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const validation = resetPasswordSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: validation.error.flatten().fieldErrors,
+      });
+    }
+
+    const { token, password } = validation.data;
+
+    const user = await User.findOne({
+      passwordResetToken: hashToken(token),
+      passwordResetExpires: { $gt: new Date() },
+    }).select("+refreshToken");
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset link is invalid or has expired",
+      });
+    }
+
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.refreshToken = null;
+    user.isEmailVerified = true;
+    await user.save();
+
+    clearTokenCookies(res);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successful. You can now log in.",
     });
   } catch (error) {
     return res.status(500).json({

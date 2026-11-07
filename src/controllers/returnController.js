@@ -7,6 +7,8 @@ import {
   returnLoanSchema,
   returnLoanIdSchema,
 } from "../validators/returnValidator.js";
+import { markOverdueLoans } from "./loanController.js";
+import Maintenance from "../models/Maintenance.js";
 
 const getLoggedInUser = async (req) => {
   const token = req.cookies?.accessToken;
@@ -78,6 +80,20 @@ export const returnLoan = async (req, res) => {
 
       await unit.save({ session });
 
+      if (condition === "damaged") {
+        await Maintenance.create(
+          [{
+            inventoryUnit: unit._id,
+            reportedBy: user._id,
+            issue: "Returned in damaged condition",
+            description: remarks,
+            status: "pending",
+            startDate: null,
+          }],
+          { session }
+        );
+      }
+
       loan.status = "returned";
       loan.returnDate = new Date();
       loan.returnedTo = user._id;
@@ -135,6 +151,7 @@ export const getOverdueLoans = async (req, res) => {
       });
     }
 
+    await markOverdueLoans();
     const now = new Date();
 
     const overdueLoans = await Loan.find({

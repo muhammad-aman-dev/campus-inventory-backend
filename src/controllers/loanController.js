@@ -26,6 +26,17 @@ const getLoggedInUser = async (req) => {
   return User.findById(decoded.id);
 };
 
+export const markOverdueLoans = async () => {
+  await Loan.updateMany(
+    {
+      status: "active",
+      dueDate: { $lt: new Date() },
+      returnDate: null,
+    },
+    { $set: { status: "overdue" } }
+  );
+};
+
 export const issueLoan = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -177,6 +188,7 @@ export const getAllLoans = async (req, res) => {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
+    await markOverdueLoans();
     const validation = loanQuerySchema.safeParse(req.query);
 
     if (!validation.success) {
@@ -234,7 +246,7 @@ export const getLoanById = async (req, res) => {
     if (!user || !user.isActive) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-
+    await markOverdueLoans();
     const validation = loanIdSchema.safeParse(req.params);
 
     if (!validation.success) {
